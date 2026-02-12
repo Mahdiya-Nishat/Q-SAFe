@@ -1,0 +1,118 @@
+#The LLM agent
+
+import torch
+import torch.nn as nn
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+class BrainRegistry:
+    """
+    Maintains identity registry of SLM agents.
+    Only registered entities can participate in FL.
+    """
+
+    def __init__(self):
+        self.registry = {}
+
+    def register(self, entity_id, hs):
+        self.registry[entity_id] = hs
+
+    def is_registered(self, entity_id):
+        return entity_id in self.registry
+
+class GlobalModelStore:
+    """
+    Stores and updates the global SLM weights.
+    """
+
+    def __init__(self):
+        self.global_weights = None
+
+    def update(self, aggregated_weights):
+        self.global_weights = aggregated_weights
+
+    def get(self):
+        return self.global_weights
+
+class TeacherCore(nn.Module):
+    """
+    Large LLM used only for KD supervision.
+    """
+
+    def __init__(self,
+                 model_name="facebook/opt-350m",
+                 num_labels=2):
+
+        super().__init__()
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModelForSequenceClassification.from_pretrained(
+            model_name,
+            num_labels=num_labels
+        )
+
+    def forward(self, text_batch):
+        tokens = self.tokenizer(
+            text_batch,
+            padding=True,
+            truncation=True,
+            return_tensors="pt"
+        )
+        tokens = {k: v.to(device) for k, v in tokens.items()}
+        logits = self.model(**tokens).logits
+        return logits
+
+
+class Orchestrator:
+    """
+    Controls FL rounds and KD scheduling.
+    """
+
+    def __init__(self, teacher, temperature=2.0, delta=2):
+        self.teacher = teacher.to(device)
+        self.temperature = temperature
+        self.delta = delta
+
+    def should_apply_kd(self, round_number):
+        return round_number % self.delta == 0
+
+    def generate_soft_targets(self, text_batch):
+        self.teacher.eval()
+        with torch.no_grad():
+            logits = self.teacher(text_batch)
+            return torch.softmax(logits / self.temperature, dim=1)
+
+class LLMAgent:
+
+    def __init__(self,
+                 model_name="facebook/opt-350m",
+                 num_labels=2,
+                 temperature=2.0,
+                 delta=2):
+
+        self.brain = BrainRegistry()
+        self.global_store = GlobalModelStore()
+        self.teacher_core = TeacherCore(model_name, num_labels)
+        self.orchestrator = Orchestrator(
+            self.teacher_core,
+            temperature,
+            delta
+        )
+
+    
+    def register_slm(self, entity_id, hs):
+        self.brain.register(entity_id, hs)
+
+    def is_eligible(self, entity_id):
+        return self.brain.is_registered(entity_id)
+
+  
+    def update_global_model(self, aggregated_weights):
+        self.global_store.update(aggregated_weights)
+
+    def get_global_model(self):
+        return self.global_store.get()
+
+
+    def get_soft_targets(self, text_batch, round_number):
+        if self.orchestrator.should_apply_kd(round_number):
+            return self.orchestrator.generate_soft_targets(text_batch)
+        return None
