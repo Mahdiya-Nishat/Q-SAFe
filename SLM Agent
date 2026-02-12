@@ -1,0 +1,105 @@
+# Implementation of the 4 modules of the SLM Agent 
+
+pip install transformer
+import torch
+import torch.nn as nn
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+class PerceptionModule:
+    """
+    Converts raw text input into tokenized tensors.
+    """
+
+    def __init__(self, model_name):
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+    def process(self, text_batch):
+        tokens = self.tokenizer(
+            text_batch,
+            padding=True,
+            truncation=True,
+            return_tensors="pt"
+        )
+        return {k: v.to(device) for k, v in tokens.items()}
+
+class MemoryModule:
+    """
+    Stores embeddings, keys, and agent state.
+    """
+
+    def __init__(self):
+        self.context_memory = []
+        self.identity = None
+
+    def store_context(self, text):
+        self.context_memory.append(text)
+
+    def set_identity(self, identity_hash):
+        self.identity = identity_hash
+
+    def retrieve_context(self):
+        return self.context_memory[-5:]  # recent memory window
+
+class PlannerModule(nn.Module):
+    """
+    Contains the actual SLM model.
+    """
+
+    def __init__(self, model_name, num_labels):
+        super().__init__()
+        self.model = AutoModelForSequenceClassification.from_pretrained(
+            model_name,
+            num_labels=num_labels
+        )
+
+    def forward(self, inputs):
+        outputs = self.model(**inputs)
+        return outputs.logits
+
+class ActionModule:
+    """
+    Converts logits to decision or response.
+    """
+
+    def act(self, logits):
+        probs = torch.softmax(logits, dim=1)
+        decision = torch.argmax(probs, dim=1)
+        return decision, probs
+
+class SLMAgent:
+
+    def __init__(self,
+                 model_name="distilbert-base-uncased",
+                 num_labels=2):
+
+        self.perception = PerceptionModule(model_name)
+        self.memory = MemoryModule()
+        self.planner = PlannerModule(model_name, num_labels).to(device)
+        self.action = ActionModule()
+
+    def forward(self, text_batch):
+
+        # 1. Perception
+        inputs = self.perception.process(text_batch)
+
+        # 2. Planning (SLM inference)
+        logits = self.planner(inputs)
+
+        # 3. Action
+        decision, probs = self.action.act(logits)
+
+        return decision, probs
+
+    def parameters(self):
+        return self.planner.parameters()
+
+    def train(self):
+        self.planner.train()
+
+    def eval(self):
+        self.planner.eval()
+
+
+
+
+
