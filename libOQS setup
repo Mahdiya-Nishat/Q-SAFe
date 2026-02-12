@@ -1,0 +1,12 @@
+# Setup: To implement the PQC algorithms ML-KEM and ML-DSA, we first need to install Open Quantum Safe (libOQS).
+
+
+sudo apt update
+sudo apt install cmake ninja-build git libssl-dev
+
+git clone --branch main https://github.com/open-quantum-safe/liboqs.git
+cd liboqs
+mkdir build && cd build
+cmake -GNinja -DBUILD_SHARED_LIBS=ON ..
+ninja
+sudo ninja install
