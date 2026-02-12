@@ -1,0 +1,114 @@
+# Phase-I : The Registration Phase
+import secrets
+import hashlib
+import oqs
+from dataclasses import dataclass
+from typing import Dict, Tuple, Iterable, List
+
+
+@dataclass(frozen=True)
+class KeyPair:
+    alg: str
+    public_key: bytes
+    secret_key: bytes
+
+class PQC:
+
+    def kem_keygen(self, alg: str = "ML-KEM-512") -> KeyPair:
+        with oqs.KeyEncapsulation(alg) as kem:
+            public_key = kem.generate_keypair()
+            secret_key = kem.export_secret_key()
+        return KeyPair(alg, public_key, secret_key)
+
+    def dsa_keygen(self, alg: str = "ML-DSA-44") -> KeyPair:
+        with oqs.Signature(alg) as sig:
+            public_key = sig.generate_keypair()
+            secret_key = sig.export_secret_key()
+        return KeyPair(alg, public_key, secret_key)
+
+
+
+class SLMMemory:
+    def __init__(self):
+        self.key_store: Dict[str, Tuple[bytes, bytes, bytes, bytes]] = {}
+
+    def store_keys(self, entity_id: str, kem_pk, kem_sk, dsa_pk, dsa_sk):
+        self.key_store[entity_id] = (kem_pk, kem_sk, dsa_pk, dsa_sk)
+
+    def get_public(self, entity_id):
+        kem_pk, _, dsa_pk, _ = self.key_store[entity_id]
+        return kem_pk, dsa_pk
+
+
+
+
+class LLM_BrainRegistry:
+    def __init__(self):
+        self.registry: Dict[str, Tuple[str, bytes, bytes]] = {}
+
+    def register(self, entity_id, hs, kem_pk, dsa_pk):
+        self.registry[entity_id] = (hs, kem_pk, dsa_pk)
+
+    def is_registered(self, entity_id):
+        return entity_id in self.registry
+
+
+def identity_hash(entity_id: str, kem_pk: bytes, dsa_pk: bytes) -> str:
+    h = hashlib.sha256()
+    h.update(entity_id.encode())
+    h.update(kem_pk)
+    h.update(dsa_pk)
+    return h.hexdigest()
+
+
+class RegistrationPhase:
+    def __init__(self, pqc, slm_memory, llm_brain):
+        self.pqc = pqc
+        self.slm_memory = slm_memory
+        self.llm_brain = llm_brain
+
+    def run(self, entities: Iterable[str]) -> List[str]:
+        registered = []
+
+        for e in entities:
+            kem = self.pqc.kem_keygen()
+            dsa = self.pqc.dsa_keygen()
+
+            self.slm_memory.store_keys(
+                e,
+                kem.public_key, kem.secret_key,
+                dsa.public_key, dsa.secret_key
+            )
+
+            hs = identity_hash(e, kem.public_key, dsa.public_key)
+
+            self.llm_brain.register(
+                e,
+                hs,
+                kem.public_key,
+                dsa.public_key
+            )
+
+            registered.append(e)
+
+        return registered
+
+
+
+if __name__ == "__main__":
+
+    pqc = PQC()
+    memory = SLMMemory()
+    brain = LLMBrainRegistry()
+
+    phase1 = RegistrationPhase(pqc, memory, brain)
+
+    entities = ["patient_1", "hospital_A", "patient_2"]
+
+    registered = phase1.run(entities)
+
+    print("\n=== Registration Complete ===")
+    for e in registered:
+        print("Entity:", e)
+        print("Registered?", brain.is_registered(e))
+        print("Hash:", brain.registry[e][0][:20], "...\n")
