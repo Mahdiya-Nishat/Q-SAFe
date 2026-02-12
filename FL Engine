@@ -1,0 +1,101 @@
+
+
+class FedProxEngine:
+
+    def __init__(self,
+                 llm_agent,
+                 slm_agents,
+                 mu=0.01,
+                 lr=1e-3,
+                 local_epochs=1,
+                 rounds=5,
+                 batch_size=16):
+
+        self.server = llm_agent
+        self.clients = slm_agents
+        self.mu = mu
+        self.lr = lr
+        self.local_epochs = local_epochs
+        self.rounds = rounds
+        self.batch_size = batch_size
+
+
+    def _local_update(self, slm_agent, global_weights, dataloader):
+
+        # Load global weights into client
+        slm_agent.load_state_dict(global_weights)
+
+        slm_agent.model.train()
+
+        optimizer = optim.Adam(slm_agent.parameters(), lr=self.lr)
+        criterion = nn.CrossEntropyLoss()
+
+        # Snapshot of global model
+        global_model = copy.deepcopy(slm_agent.model)
+        global_model.load_state_dict(global_weights)
+
+        for _ in range(self.local_epochs):
+
+            for xb, yb in dataloader:
+
+                xb, yb = xb.to(device), yb.to(device)
+
+                optimizer.zero_grad()
+
+                logits = slm_agent.model(xb)
+                loss = criterion(logits, yb)
+
+                # ---------- FedProx Term ----------
+                prox_term = 0.0
+                for w, w_global in zip(slm_agent.model.parameters(),
+                                       global_model.parameters()):
+                    prox_term += torch.norm(w - w_global.detach())**2
+
+                loss += (self.mu / 2.0) * prox_term
+                # ----------------------------------
+
+                loss.backward()
+                optimizer.step()
+
+        return slm_agent.state_dict()
+
+  
+    def _aggregate(self, updates):
+
+        new_state = copy.deepcopy(updates[0])
+
+        for key in new_state.keys():
+            new_state[key] = torch.stack(
+                [updates[i][key] for i in range(len(updates))],
+                0
+            ).mean(0)
+
+        return new_state
+
+  
+    def run(self, client_dataloaders):
+
+        for r in range(self.rounds):
+
+            print(f"\n=== FedProx Round {r+1} ===")
+
+            global_weights = self.server.get_global_model()
+
+            updates = []
+
+            for slm_agent, dataloader in zip(self.clients,
+                                             client_dataloaders):
+
+                updated_weights = self._local_update(
+                    slm_agent,
+                    global_weights,
+                    dataloader
+                )
+
+                updates.append(updated_weights)
+
+            new_global = self._aggregate(updates)
+
+            self.server.update_global_model(new_global)
+
+        print("\nFedProx Training Complete.")
