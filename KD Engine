@@ -1,0 +1,49 @@
+
+class KDEngine:
+
+    def __init__(self,
+                 llm_agent,
+                 temperature=2.0,
+                 alpha=0.5):
+
+        self.teacher = llm_agent      # LLM agent
+        self.T = temperature
+        self.alpha = alpha
+        self.kl_div = nn.KLDivLoss(reduction="batchmean")
+
+    def compute_kd_loss(self,
+                        student_logits,
+                        inputs_for_teacher):
+
+        # Teacher forward
+        with torch.no_grad():
+            teacher_logits = self.teacher.teacher_core(inputs_for_teacher)
+
+        # Soft distributions
+        student_log_probs = nn.functional.log_softmax(
+            student_logits / self.T,
+            dim=1
+        )
+
+        teacher_probs = nn.functional.softmax(
+            teacher_logits / self.T,
+            dim=1
+        )
+
+        kd_loss = self.kl_div(student_log_probs, teacher_probs)
+
+        return self.alpha * (self.T ** 2) * kd_loss
+
+
+#Now modify the loss function:
+ce_loss = criterion(logits, yb)
+
+kd_loss = kd_engine.compute_kd_loss(
+    student_logits=logits,
+    inputs_for_teacher=xb
+)
+
+loss = ce_loss + kd_loss
+
+# then add FedProx term
+loss += (mu/2) * prox_term
