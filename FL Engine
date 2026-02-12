@@ -1,4 +1,17 @@
+#Run this before the FL engine:
+# Initialize global weights once
+llm_agent.update_global_model(slm_agents[0].state_dict())
 
+engine = FedProxEngine(
+    llm_agent,
+    slm_agents,
+    mu=0.01,
+    rounds=10
+)
+
+engine.run(client_dataloaders)
+
+#Now run the FL engine
 
 class FedProxEngine:
 
