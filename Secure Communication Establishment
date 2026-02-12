@@ -1,0 +1,114 @@
+pip install cryptography
+import os
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import secrets
+
+class SessionKeyManager:
+
+    def __init__(self, kem_alg="ML-KEM-512"):
+        self.kem_alg = kem_alg
+
+  def generate_client_keypair(self):
+        kem = oqs.KeyEncapsulation(self.kem_alg)
+        public_key = kem.generate_keypair()
+        secret_key = kem.export_secret_key()
+        kem.free()
+        return public_key, secret_key
+
+    def server_encapsulate(self, client_public_key):
+        kem = oqs.KeyEncapsulation(self.kem_alg)
+        ciphertext, shared_secret = kem.encap_secret(client_public_key)
+        kem.free()
+        return ciphertext, shared_secret
+
+    def client_decapsulate(self, client_secret_key, ciphertext):
+        kem = oqs.KeyEncapsulation(self.kem_alg)
+        kem.import_secret_key(client_secret_key)
+        shared_secret = kem.decap_secret(ciphertext)
+        kem.free()
+        return shared_secret
+
+    def derive_session_key(self, shared_secret):
+        # Use SHA-256 to compress to 32 bytes
+        return hashlib.sha256(shared_secret).digest()
+
+
+# Encryption Layer (AES-GCM)
+
+class SecureChannel:
+
+    def __init__(self, session_key):
+        self.aesgcm = AESGCM(session_key)
+
+    def encrypt(self, plaintext: bytes):
+
+        nonce = os.urandom(12)   # GCM nonce
+        ciphertext = self.aesgcm.encrypt(nonce, plaintext, None)
+
+        return nonce + ciphertext
+
+    def decrypt(self, encrypted: bytes):
+
+        nonce = encrypted[:12]
+        ciphertext = encrypted[12:]
+
+        return self.aesgcm.decrypt(nonce, ciphertext, None)
+
+
+class SLMAgent:
+
+    def __init__(self, entity_id):
+        self.entity_id = entity_id
+        self.session_key = None
+        self.secure_channel = None
+
+    def establish_session(self, key_manager):
+        self.session_key = key_manager.generate_session_key()
+        self.secure_channel = SecureChannel(self.session_key)
+
+    def send_secure(self, data_bytes):
+        return self.secure_channel.encrypt(data_bytes)
+
+    def receive_secure(self, encrypted_bytes):
+        return self.secure_channel.decrypt(encrypted_bytes)
+
+
+class LLMAgent:
+
+    def __init__(self):
+        self.sessions = {}
+
+    def register_session(self, entity_id, session_key):
+        self.sessions[entity_id] = SecureChannel(session_key)
+
+    def receive_secure(self, entity_id, encrypted_bytes):
+        channel = self.sessions[entity_id]
+        return channel.decrypt(encrypted_bytes)
+
+    def send_secure(self, entity_id, data_bytes):
+        channel = self.sessions[entity_id]
+        return channel.encrypt(data_bytes)
+
+
+
+key_manager = SessionKeyManager()
+client_pk, client_sk = key_manager.generate_client_keypair()
+ciphertext, shared_secret_server = key_manager.server_encapsulate(client_pk)
+session_key_server = key_manager.derive_session_key(shared_secret_server)
+slm.establish_session(key_manager)
+shared_secret_client = key_manager.client_decapsulate(
+    client_sk,
+    ciphertext
+)
+session_key_client = key_manager.derive_session_key(shared_secret_client)
+llm.register_session(slm.entity_id, slm.session_key)
+slm.secure_channel = SecureChannel(session_key_client)
+llm.register_session(slm.entity_id, session_key_server)
+
+payload = b"Model update payload"
+encrypted = slm.send_secure(payload)
+
+decrypted = llm.receive_secure(slm.entity_id, encrypted)
+
+
+
