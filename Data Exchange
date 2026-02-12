@@ -1,0 +1,73 @@
+
+{
+    "sender_id": str,
+    "counter": int,
+    "payload": bytes
+}
+
+import os
+import json
+import struct
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+
+class SecureTransport:
+
+    def __init__(self, session_key):
+        self.aesgcm = AESGCM(session_key)
+        self.send_counter = 0
+        self.recv_counter = -1   # for replay protection
+
+    def _pack_message(self, sender_id, payload_bytes):
+
+        message = {
+            "sender_id": sender_id,
+            "counter": self.send_counter,
+            "payload": payload_bytes.hex()
+        }
+
+        self.send_counter += 1
+
+        return json.dumps(message).encode()
+
+    
+    def encrypt(self, sender_id, payload_bytes):
+
+        plaintext = self._pack_message(sender_id, payload_bytes)
+
+        nonce = os.urandom(12)
+
+        ciphertext = self.aesgcm.encrypt(nonce, plaintext, None)
+
+        return nonce + ciphertext
+
+   
+    def decrypt(self, encrypted_bytes):
+
+        nonce = encrypted_bytes[:12]
+        ciphertext = encrypted_bytes[12:]
+
+        plaintext = self.aesgcm.decrypt(nonce, ciphertext, None)
+
+        message = json.loads(plaintext.decode())
+
+        # Replay protection
+        if message["counter"] <= self.recv_counter:
+            raise ValueError("Replay attack detected")
+
+        self.recv_counter = message["counter"]
+
+        return {
+            "sender_id": message["sender_id"],
+            "payload": bytes.fromhex(message["payload"])
+        }
+
+
+
+client_transport = SecureTransport(session_key_client)
+
+server_transport = SecureTransport(session_key_server)
+message = server_transport.decrypt(encrypted)
+
+print(message["sender_id"])
+print(message["payload"])
